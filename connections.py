@@ -1,4 +1,3 @@
-from collections import deque
 from collections import deque, defaultdict
 
 class ConnectionPath:
@@ -24,27 +23,25 @@ class ConnectionPath:
 class ConnectionFinder:
     """
     BFS-пошук зв'язку з урахуванням:
-    1) Успадкування lives_in/part_of від предків суб'єкта (subject-side).
+    1) Успадкування is_habitat_of/part_of від предків суб'єкта (subject-side).
     2) Спеціалізації part_of по об'єкту (цілому) вниз до нащадків.
     3) Формування ПРОМІЖНИХ КРОКІВ у шляху для спеціалізованих part_of:
-       (A part_of T) + (T is_a↓* D) => шлях: A -[part_of]-> T -> ... -> D.
+       (A part_of T) + (T is_a D) => шлях: A -[part_of]-> T -> ... -> D.
     """
-    INHERITED_SUBJECT_RELS = {"lives_in", "part_of"}
-    SPECIALIZE_OBJECT_RELS = {"part_of", "lives_in"}
+    INHERITED_SUBJECT_RELS = {"is_habitat_of", "part_of"}
+    SPECIALIZE_OBJECT_RELS = {"part_of", "is_habitat_of"}
 
     def __init__(self, knowledge_base):
         self.kb = knowledge_base
-        self._parents = defaultdict(set)   # child -> {parents}
-        self._children = defaultdict(set)  # parent -> {children}
+        self._parents = defaultdict(set)   # child -> {parents} (зберігає батьків для кожної дитини)
+        self._children = defaultdict(set)  # parent -> {children} (зберігає дітей для кожного батька)
         self._built_taxonomy = False
 
-    # ---------- Публічний метод ----------
     def find_path(self, start, target):
         self._ensure_taxonomy()
 
         visited = set()
-        # Кожен елемент черги: (current_node, path_steps_so_far)
-        # де path_steps_so_far — список кроків (from, rel, to)
+        # Кожен елемент черги: (current_node, path_steps_so_far), де path_steps_so_far — список кроків (from, rel, to)
         queue = deque([(start, [])])
 
         while queue:
@@ -62,8 +59,7 @@ class ConnectionFinder:
 
             # Отримуємо ефективні ребра з current разом із пояснювальними кроками
             for rel, nbr, expl_steps in self._effective_relations_from_with_expl(current):
-                # expl_steps — це вже послідовність кроків від 'current' до 'nbr'
-                # (для спеціалізації part_of містить проміжні кроки is_a↓)
+                # expl_steps — це вже послідовність кроків від 'current' до 'nbr' (для спеціалізації part_of містить проміжні кроки is_a)
                 new_path = path + expl_steps
                 queue.append((nbr, new_path))
 
@@ -72,7 +68,6 @@ class ConnectionFinder:
         conn.set_found(False)
         return conn
 
-    # ---------- Внутрішні утиліти ----------
     def _ensure_taxonomy(self):
         if self._built_taxonomy:
             return
@@ -139,39 +134,39 @@ class ConnectionFinder:
         - rel, neighbor — "ефективне" ребро з урахуванням успадкування/спеціалізації;
         - expl_steps — послідовність кроків (from, rel, to), яка ПОВНІСТЮ
           описує перехід від node до neighbor. Для спеціалізованих part_of
-          містить проміжні кроки is_a↓.
+          містить проміжні кроки is_a.
         """
-        # 1) Прямі вихідні зв'язки з node
+        # [("part_of", "Судинна")]
         base_edges = list(self.kb.get_relations(node))
-        # Запишемо їх з поясненням "сам по собі"
+        # ("part_of", "Судинна", [("Листок", "part_of", "Судинна")])
         explained = [(rel, obj, [(node, rel, obj)]) for (rel, obj) in base_edges]
 
         # 2) Успадковані від предків суб'єкта (тільки обрані типи)
         for anc in self._ancestors(node):
             for rel, obj in self.kb.get_relations(anc):
                 if rel in self.INHERITED_SUBJECT_RELS:
-                    # Проста інтерпретація: вважати, що node має той самий зв'язок
-                    explained.append((rel, obj, [(node, rel, obj)]))
+                    # Перевірити винятки:
+                    if not self.kb.has_exception(node, rel, obj):
+                        explained.append((rel, obj, [(node, rel, obj)]))
 
         # 3) Спеціалізація вниз по ОБ'ЄКТУ для part_of:
         #    (node -[part_of]-> T) => також (node -[part_of]-> D) для кожного нащадка D T,
-        #    а пояснення включає (node -[part_of]-> T) + (T -[is_a↓]-> ... -> D)
+        #    а пояснення включає (node -[part_of]-> T) + (T -[is_a]-> ... -> D)
         specialized = []
         for rel, obj, expl in explained:
             specialized.append((rel, obj, expl))  # зберігаємо оригінал
             if rel in self.SPECIALIZE_OBJECT_RELS:
                 for d in self._descendants(obj):
-                    nodes_path = self._down_is_a_path_nodes(obj, d)
-                    if not nodes_path or len(nodes_path) < 2:
-                        continue
-                    # Збудувати пояснення:
-                    # 1) перший крок: node -[part_of]-> obj
-                    sp_expl = [(node, rel, obj)]
-                    # 2) проміжні кроки: obj -> ... -> d позначаємо як is_a↓
-                    for i in range(len(nodes_path) - 1):
-                        a, b = nodes_path[i], nodes_path[i + 1]
-                        sp_expl.append((a, "is_a", b))
-                    specialized.append((rel, d, sp_expl))
+                    # Перевірка винятку для спеціалізованого зв'язку
+                    if not self.kb.has_exception(node, rel, d):
+                        nodes_path = self._down_is_a_path_nodes(obj, d)
+                        if not nodes_path or len(nodes_path) < 2:
+                            continue
+                        sp_expl = [(node, rel, obj)]
+                        for i in range(len(nodes_path) - 1):
+                            a, b = nodes_path[i], nodes_path[i + 1]
+                            sp_expl.append((b, "is_a", a))
+                        specialized.append((rel, d, sp_expl))
 
         # 4) Унікалізація: якщо є кілька шляхів до того самого (rel, neighbor),
         #    залишаємо найкоротше пояснення (мінімум кроків).

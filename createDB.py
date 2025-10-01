@@ -1,7 +1,6 @@
-
 def createDB(kb):
     is_a_pairs = [
-        ("Тварина", "Еукаріот"),
+        ("Тварина", "Еукаріот"), # child and parent
         ("Рослина", "Еукаріот"),
 
         # Тварини
@@ -85,29 +84,29 @@ def createDB(kb):
         ("Фукус", "Бура"),
     ]
 
-    # Унікальні назви сутностей із is_a_pairs
-    all_entities = set()
+    # [child] is_a [parent]
+    all_entities = set() # унікальні назви сутностей з is_a_pairs
     for child, parent in is_a_pairs:
         all_entities.add(child)
         all_entities.add(parent)
 
-    # Створити всі сутності в базі знань
-    for name in sorted(all_entities):
+    for name in sorted(all_entities): # створили ці сутності в БД
         kb.add_object(name)
 
     for part, whole in is_a_pairs:
         kb.add_relation(part, "is_a", whole)
 
-    # 2) Додати 6 нових сутностей для part_of та зв’язки part_of
-    #    [частина] part_of [ціле]
-    part_entities = ["Хвіст", "Лапа", "Шерсть", "Листок", "Корінь", "Хвоя"]
+    # [частина] part_of [ціле]
+    part_entities = ["Хвіст", "Лапа", "Шерсть", "Плавник", "Листок", "Корінь", "Хвоя"]
     for name in part_entities:
         kb.add_object(name)
 
     part_of_relations = [
         ("Хвіст", "Ссавець"),
-        ("Лапа", "Ссавець"),
+        ("Хвіст", "Риба"),
         ("Шерсть", "Наземний"),
+        ("Плавник", "Водний"),
+        ("Лапа", "Ссавець"),
         ("Листок", "Судинна"),
         ("Корінь", "Рослина"),
         ("Хвоя", "Хвойна"),
@@ -115,8 +114,7 @@ def createDB(kb):
     for part, whole in part_of_relations:
         kb.add_relation(part, "part_of", whole)
 
-    # 3) Додати 4 нові сутності для lives_in та зв’язки lives_in
-    #    [X] lives_in [середовище]
+    # 3) [середовище] is_habitat_of [X]
     habitats = ["Ліс", "Річка", "Море", "Сад"]
     for h in habitats:
         kb.add_object(h)
@@ -132,13 +130,17 @@ def createDB(kb):
         ("Мохоподібна", "Сад"),
     ]
     for subj, place in lives_in_relations:
-        kb.add_relation(place, "lives_in", subj)
+        kb.add_relation(place, "is_habitat_of", subj)
 
-    # ---------------------------------------------------------
-    # 4) (ПІСЛЯ цього блоку ти додаєш свої зв’язки is_a)
-    #    Напр., щось на кшталт:
-    #    for child, parent in is_a_pairs:
-    #        kb.add_relation(child, "is_a", parent)
-    # ---------------------------------------------------------
+    # Слон не має шерсті (хоча він Наземний → Ссавець → має Шерсть)
+    kb.add_exception("Шерсть", "part_of", "Слон")
 
-    # print(kb.get_statistics())
+    # Водні ссавці не мають лап
+    kb.add_exception("Лапа", "part_of", "Водний")
+    kb.add_exception("Лапа", "part_of", "Кит")
+    kb.add_exception("Лапа", "part_of", "Дельфін")
+
+    # Водні ссавці не живуть у лісі
+    kb.add_exception("Ліс", "is_habitat_of", "Водний")
+    kb.add_exception("Ліс", "is_habitat_of", "Кит")
+    kb.add_exception("Ліс", "is_habitat_of", "Дельфін")
